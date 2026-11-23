@@ -1,171 +1,156 @@
 <div align="center">
 
-# 💸 Azure Cloud Tabanlı Finansal ETL Pipeline
-### *Gerçek Zamanlı Döviz Kurları Ingestion, Veri Temizleme & Azure SQL Veri Ambarı Pipeline'ı*
+# 💸 Azure Cloud FX Rates ETL Pipeline
 
-<p align="center">
-  <img src="https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python" />
-  <img src="https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white" alt="Pandas" />
-  <img src="https://img.shields.io/badge/Microsoft_Azure-0078D4?style=for-the-badge&logo=microsoft-azure&logoColor=white" alt="Azure" />
-  <img src="https://img.shields.io/badge/Azure_Blob_Storage-008AD7?style=for-the-badge&logo=microsoft-azure&logoColor=white" alt="Blob Storage" />
-  <img src="https://img.shields.io/badge/Azure_SQL_Database-CC292B?style=for-the-badge&logo=microsoft-sql-server&logoColor=white" alt="SQL Database" />
-  <img src="https://img.shields.io/badge/SQLAlchemy-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white" alt="SQLAlchemy" />
-</p>
+### *Automated Exchange Rate Ingestion, In-Memory Transformation & Azure SQL Data Warehouse Loading*
 
-<p align="center">
-  <b>Uçtan Uca Bulut Veri Mühendisliği Çözümü</b><br>
-  REST API ➔ In-Memory Veri Çıkarımı ➔ Azure Data Lake (Blob) ➔ Dönüştürme & Zenginleştirme ➔ Azure SQL Database
-</p>
-
----
+[![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Pandas](https://img.shields.io/badge/Pandas-150458?style=for-the-badge&logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![Microsoft Azure](https://img.shields.io/badge/Microsoft_Azure-0078D4?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/)
+[![Azure Blob Storage](https://img.shields.io/badge/Azure_Blob_Storage-Data_Lake-008AD7?style=for-the-badge&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/)
+[![Azure SQL](https://img.shields.io/badge/Azure_SQL_Database-Warehouse-CC292B?style=for-the-badge&logo=microsoftsqlserver&logoColor=white)](https://azure.microsoft.com/)
+[![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white)](https://www.sqlalchemy.org/)
 
 </div>
 
-## 📌 Proje Genel Bakışı
+---
 
-Bu proje, global döviz kuru verilerini harici bir **REST API** kaynağından çekip, **bulut depolama (Data Lake)** üzerinde ham veri (raw data) olarak saklayan, ardından **Pandas** ile temizleyip zenginleştirerek **Azure SQL Database** ortamına aktaran uçtan uca modern bir **ETL (Extract - Transform - Load)** veri mimarisidir.
+## 📌 Overview
 
-Tüm I/O işlemleri yerel diske bağımlı kalmadan doğrudan **bellek üzerinden (In-Memory / `io.StringIO`)** akıtılarak yüksek performans ve hız hedeflenmiştir.
+This project is an end-to-end **Cloud ETL (Extract, Transform, Load)** data pipeline that pulls daily global foreign exchange (FX) rates from a **REST API**, archives raw daily snapshots in **Azure Blob Storage (Data Lake)**, cleans and enriches the dataset in memory with **Pandas**, and appends analytics-ready records into **Azure SQL Database**.
+
+All file serialization and deserialization steps operate **in memory via `io.StringIO`**, eliminating unnecessary local disk I/O and keeping the pipeline lightweight and cloud-ready.
 
 ---
 
-## 🏗️ Veri Mimarisi & Akış Şeması
+## 🏗️ Pipeline Architecture
 
 ```mermaid
 flowchart LR
-    subgraph S["1. Veri Kaynağı"]
-        API["ExchangeRate REST API\n(USD Bazlı Güncel Kurlar)"]
+    subgraph SRC["1. Data Source"]
+        API["ExchangeRate REST API<br/>(USD-Based Live FX Rates)"]
     end
 
-    subgraph E["2. Extract (Ham Veri)"]
-        EX["extract.py\n(In-Memory CSV Buffer)"]
-        LAKE[("Azure Blob Storage\nContainer: 'ham-veri'")]
+    subgraph EXT["2. Extract (extract.py)"]
+        EX["In-Memory CSV Stream<br/>(io.StringIO)"]
+        LAKE[("Azure Blob Storage<br/>Container: ham-veri/<br/>YYYY-MM-DD_kurlar.csv")]
     end
 
-    subgraph T["3. Transform (Dönüştürme)"]
-        TR["transform.py\n• Boş Değer Temizliği\n• Hatalı Kur Filtresi\n• TRY Çapraz Kur Hesabı\n• Yükleme Zaman Damgası"]
+    subgraph TRN["3. Transform (transform.py)"]
+        TR["Pandas Cleaning & Enrichment<br/>• Drop null rows (dropna)<br/>• Filter invalid rates (Kur_USD > 0)<br/>• Compute TRY cross-rates<br/>• Append audit timestamp"]
     end
 
-    subgraph L["4. Load (Veri Ambarı)"]
-        SQL[("Azure SQL Database\nTablo: 'GunlukKurlar'")]
+    subgraph LD["4. Load (Azure SQL)"]
+        SQL[("Azure SQL Database<br/>Table: GunlukKurlar<br/>Mode: Append")]
     end
 
     API -->|JSON Response| EX
-    EX -->|In-Memory Stream| LAKE
+    EX -->|Upload Stream| LAKE
     LAKE -->|Download Stream| TR
-    TR -->|SQLAlchemy / ODBC 18| SQL
-
-    classDef source fill:#e1f5fe,stroke:#03a9f4,stroke-width:2px;
-    classDef lake fill:#fff3e0,stroke:#ff9800,stroke-width:2px;
-    classDef trans fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px;
-    classDef db fill:#e8f5e9,stroke:#4caf50,stroke-width:2px;
-
-    class API source;
-    class LAKE,EX lake;
-    class TR trans;
-    class SQL db;
+    TR -->|SQLAlchemy + ODBC 18| SQL
 ```
 
 ---
 
-## ⚡ ETL Aşamaları Detayı
+## ⚡ Pipeline Stages
 
-### 1️⃣ Extract (`extract.py`)
-- **API Entegrasyonu:** ExchangeRate-API üzerinden USD bazlı anlık pariteler JSON formatında çekilir.
-- **Bellek İçi Hazırlık:** Pandas DataFrame'e dönüştürülen ham veri, diske yazma maliyetini önlemek amacıyla `io.StringIO` kullanılarak RAM üzerinde `.csv` formatına serileştirilir.
-- **Data Lake Yüklemesi:** `YYYY-MM-DD_kurlar.csv` formatında isimlendirilerek Azure Blob Storage'daki `ham-veri` kapsayıcısına aktarılır.
+### 1. Extract (`extract.py`)
+- Fetches live USD-based currency exchange rates in JSON format from `ExchangeRate-API`.
+- Converts the payload into a Pandas DataFrame stamped with the extraction date (`YYYY-MM-DD`).
+- Serializes to CSV purely in memory (`io.StringIO`) and uploads daily raw snapshots (`YYYY-MM-DD_kurlar.csv`) to the `ham-veri` container in **Azure Blob Storage**.
 
-### 2️⃣ Transform (`transform.py`)
-- **Ham Veri Okuma:** Azure Blob Storage'dan bugünün CSV verisi stream olarak okunur.
-- **Temizlik & Filtreleme:**
-  - `dropna()` ile eksik satırlar ayıklanır.
-  - Negatif veya sıfır olan hatalı kur değerleri elenir (`Kur_USD > 0`).
-- **Zenginleştirme (Feature Engineering):**
-  - **TRY Çapraz Kuru:** USD/TRY baz alınarak tüm para birimleri için anlık Türk Lirası karşılığı (`TRY_Karsiligi`) hesaplanır.
-  - **Audit Timestamp:** Verinin işlenme anı `Yukleme_zamani` kolonu ile etiketlenir.
+### 2. Transform (`transform.py`)
+- Streams the daily raw CSV directly from **Azure Blob Storage** into Pandas.
+- **Data Cleaning:** Drops missing values (`dropna()`) and filters out non-positive/corrupted rates (`Kur_USD > 0`).
+- **Feature Engineering:** Computes the live **Turkish Lira (TRY) cross-rate** (`TRY_Karsiligi`) for every currency relative to USD/TRY.
+- **Auditability:** Stamps each batch with an exact ingestion timestamp (`Yukleme_zamani`).
 
-### 3️⃣ Load (`transform.py`)
-- **Güvenli Bağlantı:** `.env` üzerinden okunan kimlik bilgileriyle `ODBC Driver 18 for SQL Server` bağlantı cümlesi oluşturulur.
-- **Veritabanına Yazım:** SQLAlchemy ve `pyodbc` motoru yardımıyla optimize edilmiş toplu veri yazımı gerçekleştirilerek Azure SQL `GunlukKurlar` tablosuna aktarılır.
+### 3. Load (`transform.py`)
+- Establishes a TLS-encrypted connection (`Encrypt=yes;TrustServerCertificate=no;`) to **Azure SQL Database** via SQLAlchemy and `ODBC Driver 18 for SQL Server`.
+- Appends cleaned daily records (`if_exists="append"`) to the `GunlukKurlar` table to build a historical time-series dataset.
 
 ---
 
-## 🗂️ Proje Dizin Yapısı
+## 📊 Target Table Schema (`GunlukKurlar`)
+
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `Para_Birimi` | `VARCHAR` | ISO currency code (e.g., `EUR`, `GBP`, `TRY`, `JPY`) |
+| `Kur_USD` | `FLOAT` | Currency rate relative to 1 USD |
+| `Tarih` | `DATE` | Snapshot extraction date (`YYYY-MM-DD`) |
+| `TRY_Karsiligi` | `FLOAT` | Calculated Turkish Lira value of 1 unit of currency |
+| `Yukleme_zamani` | `DATETIME` | Pipeline load audit timestamp |
+
+---
+
+## 📂 Repository Structure
 
 ```text
-Finans-ETL/
-│
-├── .env                  # Veritabanı ve gizli bağlantı anahtarları (Gitignore ile korunur)
-├── .env.example          # Güvenli ortam değişkenleri şablonu
-├── .gitignore            # Hassas dosyaların ve venv'in dışlanması
-├── extract.py            # API'den veri çekme ve Azure Blob'a yükleme adımı
-├── transform.py          # Veriyi temizleme, zenginleştirme ve Azure SQL'e basma adımı
-└── README.md             # Proje dokümantasyonu
+azure-fx-rates-etl-pipeline/
+├── .env.example          # Environment variable template (no secrets)
+├── .gitignore            # Excludes .env, .venv, __pycache__
+├── requirements.txt      # Python dependencies
+├── extract.py            # REST API -> Azure Blob Storage ingestion
+├── transform.py          # Azure Blob -> Pandas transformation -> Azure SQL load
+└── README.md             # Project documentation
 ```
 
 ---
 
-## 🛡️ Güvenlik & Konfigürasyon
+## 🚀 Quick Start
 
-Proje, kurumsal güvenlik standartlarına uygun olarak tasarlanmıştır. Veritabanı ve Azure kimlik bilgileri kaynak kodda **hardcoded** olarak tutulmaz.
+### 1. Prerequisites
+- Python 3.10+
+- [Microsoft ODBC Driver 18 for SQL Server](https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server)
+- Microsoft Azure **Blob Storage** container (`ham-veri`) & **Azure SQL Database**
 
-1. Proje kök dizininde `.env` dosyasını yapılandırın:
-   ```env
-   DB_SERVER=sql-finans-kerem2026.database.windows.net
-   DB_DATABASE=db-finans
-   DB_USERNAME=adminkerem
-   DB_PASSWORD=your_secure_password
-   ```
-
-2. `.gitignore` dosyası ile `.env`, `__pycache__` ve `.venv` otomatik olarak versiyon kontrolü dışında tutulur.
-
----
-
-## 🚀 Kurulum ve Çalıştırma
-
-### 1. Depoyu Klonlayın & Sanal Ortamı Başlatın
+### 2. Clone & Install Dependencies
 ```bash
-git clone https://github.com/kullaniciadi/Finans-ETL.git
-cd Finans-ETL
+git clone https://github.com/blgnr1/azure-fx-rates-etl-pipeline.git
+cd azure-fx-rates-etl-pipeline
 
-# Sanal ortam oluşturma ve aktif etme (Windows)
 python -m venv .venv
+# Windows:
 .venv\Scripts\activate
+# Linux / macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
 ```
 
-### 2. Gerekli Paketleri Yükleyin
+### 3. Configure Environment Variables
+Copy `.env.example` to `.env` and fill in your Azure credentials:
 ```bash
-pip install pandas requests azure-storage-blob sqlalchemy pyodbc python-dotenv
+cp .env.example .env
 ```
 
-> [!NOTE]
-> Azure SQL bağlantısı için sisteminizde **ODBC Driver 18 for SQL Server** kurulu olmalıdır.
+```ini
+AZURE_STORAGE_CONNECTION_STRING="DefaultEndpointsProtocol=https;AccountName=<your_account>;AccountKey=<your_key>;EndpointSuffix=core.windows.net"
+DB_SERVER="<your-sql-server>.database.windows.net"
+DB_DATABASE="<your_database>"
+DB_USERNAME="<your_sql_username>"
+DB_PASSWORD="<your_secure_password>"
+```
 
-### 3. Pipeline'ı Tetikleyin
-
+### 4. Run the Pipeline
 ```bash
-# 1. Ham veriyi API'den alıp Azure Blob Storage'a yaz
+# Step 1: Extract live FX rates into Azure Blob Storage
 python extract.py
 
-# 2. Veriyi temizleyip dönüştür ve Azure SQL'e yükle
+# Step 2: Clean, enrich, and load into Azure SQL Database
 python transform.py
 ```
 
 ---
 
-## 📊 Örnek Hedef Tablo Şeması (`GunlukKurlar`)
+## 🔒 Security
 
-| Kolon Adı | Tip | Açıklama |
-| :--- | :--- | :--- |
-| `Para_Birimi` | `VARCHAR(10)` | Döviz Kodu (EUR, GBP, JPY...) |
-| `Kur_USD` | `FLOAT` | 1 USD karşılığı parite değeri |
-| `Tarih` | `DATE` | Verinin çekildiği günün tarihi |
-| `TRY_Karsiligi` | `FLOAT` | 1 Birim dövizin hesaplanan TL değeri |
-| `Yukleme_zamani` | `DATETIME` | Verinin ETL'den geçip SQL'e yazıldığı an |
+- All connection strings and database credentials are read exclusively from environment variables via `python-dotenv`.
+- `.env` and local environments are excluded via `.gitignore`.
+- Azure SQL traffic enforces encrypted TLS transport (`Encrypt=yes;TrustServerCertificate=no;`).
 
 ---
 
 <div align="center">
-  <sub>Geliştirici: <b>Kerem</b> • Modern Cloud Data Engineering Projesi</sub>
+  <sub>Built by <b>Kerem Bilginer</b> · <a href="https://www.linkedin.com/in/kerem-bilginer/">LinkedIn</a> · <a href="https://www.blgnr1.com/">Portfolio</a></sub>
 </div>
-
